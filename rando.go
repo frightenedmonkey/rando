@@ -2,9 +2,11 @@ package rando
 
 import (
 	"flag"
+	"math/rand"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 var seed = flag.Int64("rando.seed", 0, "Specify a seed for the randomization of test execution")
@@ -15,19 +17,33 @@ type TestSuite interface {
 	T() *testing.T
 }
 
+// Suite is the reified struct to embed in your TestSuite
 type Suite struct {
 	t *testing.T
 }
 
+// T returns the *testing.T in the Suite
 func (s *Suite) T() *testing.T {
 	return s.t
 }
 
-func Run(t *testing.T, s TestSuite) {
-	// 1. Get test methods
-	// 2. Randomize the order
-	// 3. Run the tests
+// Run takes a *testing.T and variadic number of TestSuites, derives all the tests
+// that start with Test (like the go test tool), randomizes all the tests, and
+// then runs them.
+func Run(t *testing.T, ts ...TestSuite) {
+	var tests []testing.InternalTest
 
+	for _, s := range ts {
+		tests = append(tests, getTests(s)...)
+	}
+
+	tests = randomize(tests, t)
+	for _, test := range tests {
+		t.Run(test.Name, test.F)
+	}
+}
+
+func getTests(s TestSuite) []testing.InternalTest {
 	tester := reflect.TypeOf(s)
 
 	var tests []testing.InternalTest
@@ -40,8 +56,7 @@ func Run(t *testing.T, s TestSuite) {
 				Name: method.Name,
 				F: func(t *testing.T) {
 					values := []reflect.Value{
-						reflect.ValueOf(s),
-						reflect.ValueOf(t),
+						reflect.ValueOf(s), reflect.ValueOf(t),
 					}
 					method.Func.Call(values)
 				},
@@ -49,7 +64,21 @@ func Run(t *testing.T, s TestSuite) {
 			tests = append(tests, test)
 		}
 	}
-	for _, te := range tests {
-		t.Run(te.Name, te.F)
+	return tests
+}
+
+func randomize(tests []testing.InternalTest, t *testing.T) []testing.InternalTest {
+	var rando int64
+	if *seed == 0 {
+		rando = time.Now().UnixNano()
+	} else {
+		rando = *seed
 	}
+	t.Logf("Randomizing tests using seed %d", seed)
+	rand.Seed(rando)
+
+	rand.Shuffle(len(tests), func(i, j int) {
+		tests[i], tests[j] = tests[j], tests[i]
+	})
+	return tests
 }
